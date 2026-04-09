@@ -7,79 +7,81 @@ import os
 folder = r"C:\Users\ccexe\Downloads"
 file_path = os.path.join(folder, "globalsums.xlsx")
 
-scenarios = ["100", "110", "115", "120"]
+# Defining the clusters and the specific conditions within them
+scenarios = ["100", "120"]
+conditions = [
+    {"suffix": "", "label": "Pre-Fire (Baseline)", "color": "#1f77b4"},
+    {"suffix": "", "label": "Post-Fire (CN79)", "color": "#ff7f0e"},
+    {"suffix": "41", "label": "Post-Fire (CN 41)", "color": "#d62728"},
+    {"suffix": "Imp50", "label": "Post-Fire (Imp 50%)", "color": "#9467bd"}
+]
 
-pre_totals = []
-post_totals = []
+data_matrix = [] # Will store sums for each bar
 
-print("Calculating total watershed volumes...")
+print("Aggregating volumes for sensitivity analysis...")
 
-# --- 2. DATA EXTRACTION & AGGREGATION ---
+# --- 2. DATA EXTRACTION ---
 for sc in scenarios:
-    try:
-        # Read Pre-Fire sheet
-        df_pre = pd.read_excel(file_path, sheet_name=f"Pre{sc}", engine='openpyxl')
-        # We assume you only want Subbasins. If Subbasins have specific names (like 'W'), 
-        # you could filter here. For now, we sum the entire Volume column (Index 4).
-        pre_sum = pd.to_numeric(df_pre.iloc[:, 4], errors='coerce').sum()
-        pre_totals.append(pre_sum)
+    sc_results = []
+    for cond in conditions:
+        # Determine the sheet name
+        # Pre100, Post100, Post10041, Post100Imp50, etc.
+        prefix = "Pre" if "Pre-Fire" in cond["label"] else "Post"
+        sheet_name = f"{prefix}{sc}{cond['suffix']}"
         
-        # Read Post-Fire sheet
-        df_post = pd.read_excel(file_path, sheet_name=f"Post{sc}", engine='openpyxl')
-        post_sum = pd.to_numeric(df_post.iloc[:, 4], errors='coerce').sum()
-        post_totals.append(post_sum)
-        
-    except Exception as e:
-        print(f"Error on scenario {sc}: {e}. (Is the Excel file open?)")
-        pre_totals.append(0)
-        post_totals.append(0)
+        try:
+            df = pd.read_excel(file_path, sheet_name=sheet_name, engine='openpyxl')
+            # Sum column index 4 (Volume mm)
+            total_vol = pd.to_numeric(df.iloc[:, 4], errors='coerce').sum()
+            sc_results.append(total_vol)
+        except Exception as e:
+            print(f"Warning: Could not read sheet {sheet_name}. Error: {e}")
+            sc_results.append(0)
+    data_matrix.append(sc_results)
 
 # --- 3. PLOTTING ---
-print("Generating the Total Volume chart...")
+print("Generating comparison chart...")
 plt.style.use('ggplot')
-fig, ax = plt.subplots(figsize=(12, 8), constrained_layout=True)
+fig, ax = plt.subplots(figsize=(14, 8), constrained_layout=True)
 
+# Transpose matrix for plotting groups
+# row 0 = 100% results, row 1 = 120% results
 x = np.arange(len(scenarios))
-width = 0.35
+width = 0.2 # Thinner bars to fit 4 in a group
 
-# Plotting the grouped bars
-bars1 = ax.bar(x - width/2, pre_totals, width, label='Pre-Fire (Baseline)', color='#1f77b4')
-bars2 = ax.bar(x + width/2, post_totals, width, label='Post-Fire (Burn)', color='#d62728')
+# Create the bars for each condition
+for i, cond in enumerate(conditions):
+    # Extract the i-th result from every scenario list
+    bar_heights = [sc_data[i] for sc_data in data_matrix]
+    # Offset the bars: -1.5, -0.5, 0.5, 1.5 times the width
+    offset = (i - 1.5) * width
+    
+    bars = ax.bar(x + offset, bar_heights, width, label=cond["label"], color=cond["color"])
+    
+    # Add text labels (Strictly normal font)
+    for bar in bars:
+        yval = bar.get_height()
+        if yval > 0:
+            ax.text(bar.get_x() + bar.get_width()/2, yval + (max(max(data_matrix)) * 0.01),
+                    f'{yval:,.0f}', ha='center', va='bottom', 
+                    fontsize=9, fontweight='normal')
 
-# --- CLEAN ANNOTATIONS (STRICTLY NORMAL FONT) ---
-# Add text labels on top of the bars
-for bar in bars1:
-    yval = bar.get_height()
-    if yval > 0:
-        ax.text(bar.get_x() + bar.get_width()/2, yval + (max(post_totals) * 0.02), 
-                f'{yval:,.0f}', ha='center', va='bottom', 
-                fontsize=10, fontweight='normal', color='#333333')
+# Formatting
+ax.set_ylabel("Total Cumulative Volume (mm)", fontsize=12, fontweight='normal')
 
-for bar in bars2:
-    yval = bar.get_height()
-    if yval > 0:
-        ax.text(bar.get_x() + bar.get_width()/2, yval + (max(post_totals) * 0.02), 
-                f'{yval:,.0f}', ha='center', va='bottom', 
-                fontsize=10, fontweight='normal', color='#660000')
 
-# Formatting the Chart
-
-ax.set_ylabel("Total Volume (mm)", fontsize=12, fontweight='normal')
-ax.set_xlabel("Climate Scenario Multiplier", fontsize=12, fontweight='normal', labelpad=10)
-
-# Label the X-Axis with the scenario percentages
 ax.set_xticks(x)
-ax.set_xticklabels([f"{sc}%" for sc in scenarios], fontsize=11)
+ax.set_xticklabels([f"{sc}% Climate Scenario" for sc in scenarios], fontsize=11)
 
-# Dynamic Y-Axis scale to leave room for the text labels
-ax.set_ylim(0, max(post_totals) * 1.15)
+# Set Y-limit with room for labels
+ax.set_ylim(0, max(max(data_matrix)) * 1.2)
 
-ax.legend(loc='upper left', fontsize=11, framealpha=0.9)
+ax.legend(loc='upper left', fontsize=10, framealpha=0.9)
 ax.grid(axis='y', linestyle='--', alpha=0.7)
 
 # Save the final image
-output_path = os.path.join(folder, "Total_Watershed_Volume.png")
+output_path = os.path.join(folder, "Sensitivity_Volume_Analysis.png")
 plt.savefig(output_path, dpi=300, bbox_inches='tight')
 plt.show()
 
-print(f"Success! Executive summary chart saved to: {output_path}")
+print(f"Success! Sensitivity chart saved to: {output_path}")
